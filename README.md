@@ -20,6 +20,13 @@ record to the owning card: agent id, title, status (`running` / `idle` / `done` 
 `failed`), tool-call count, and the last tool used. So the board answers *"which
 subagents ran for this task, and how did they go?"* — not just *"what is the task?"*.
 
+**v1.2.0 — TUI subagent panel.** The package now also ships a terminal-UI entrypoint
+(`opencode-kanban-manager/tui`) that adds a **Kanban · Subagents** session panel mirroring
+the native picker: `↑`/`↓` move, `←`/`→` toggle the active/inactive filter, `Enter` opens
+the selected session, `r` refreshes, `Esc` closes. Unlike the built-in picker it is
+*kanban-aware*: it groups each subagent under its owning task card. Open it with the
+`/kanban-agents` slash command or the "Kanban: Subagents" palette entry.
+
 ## Preview
 
 ![opencode-kanban-manager preview](docs/preview.png)
@@ -36,6 +43,15 @@ derives both at once and uses them together to pick a subagent.
 
 ```sh
 opencode plugin add github:tomzio/opencode-kanban-manager
+```
+
+The `Kanban · Subagents` TUI panel (v1.2.0) is a CLI/TUI plugin, so it also needs the
+package listed in your global `~/.config/opencode/cli.json`:
+
+```jsonc
+{
+  "plugins": ["opencode-kanban-manager"]
+}
 ```
 
 ### From a local checkout
@@ -114,6 +130,47 @@ list in `/board` and in the injected context, e.g.:
 This is per-task and persisted, so it survives restarts — it complements the native TUI
 `Subagents` picker (press `↓`), which only shows the *current* session's live children.
 
+## TUI subagent panel (v1.2.0)
+
+The native `↓` picker shows the **current session's** live children. The kanban TUI panel
+shows the same information **grouped by task card**, and works across the whole board.
+
+Open it with:
+
+- the slash command `/kanban-agents`, or
+- the command palette (`Ctrl+P`) → **Kanban: Subagents**.
+
+| Key | Action |
+|:---|:---|
+| `↑` / `↓` | Move between task rows and subagent rows |
+| `←` | Show **active only** (`running`) |
+| `→` | Show **active + inactive** (`idle` / `done` / `failed`) |
+| `Enter` | Open the selected task's root session, or the selected subagent's child session |
+| `r` | Refresh |
+| `Esc` | Close the panel and return to the main agent |
+
+Rows render like:
+
+```
+Kanban · Subagents                                            all agents
+▸ task_a1 [bug-fix / full-stack] in_progress 医疗档案列表控件怎么没数据
+  ▸ ↳ ▶ explore — 摸清页面注册 · running · 12 tools · last: grep
+      ↳ ✓ general — 医保附属拆四册 · done · 5 tools
+```
+
+### How the panel is wired
+
+- `src/rpc.ts` defines a shared RPC contract (`Rpc.define`) with a read-only `snapshot`
+  method and a `changed` event.
+- The server plugin (`src/index.ts`) registers the RPC handler and emits `changed`
+  whenever a card is written.
+- The TUI plugin (`src/tui.tsx`) claims the `session.panel` slot, fetches a snapshot over
+  `ctx.client.rpc(KanbanRpc)`, subscribes to `ctx.data.listen(...)` to refresh live, and
+  binds its keys with a panel-scoped `ctx.keymap.layer(...)`.
+
+Because the TUI entrypoint is optional, the server plugin still works on its own in
+headless / SDK usage.
+
 ## Routing blueprint (injected into the model context)
 
 1. `bug-fix` + `full-stack` (unknown root cause) → **Full-Stack Detective subagent**,
@@ -144,6 +201,11 @@ This is per-task and persisted, so it survives restarts — it complements the n
 - `ctx.event.subscribe({ signal })` — observes `session.created` (child sessions),
   `session.tool.input.started`, `session.execution.*`, and `session.status` to keep each
   card's subagent run records current.
+- `ctx.rpc.register(KanbanRpc, handlers)` + `registration.events.emit(...)` — expose the
+  board to the optional TUI entrypoint.
+- TUI (`@opencode/plugin/tui`): `ctx.ui.slot({ append: "session.panel", ... })`,
+  `ctx.ui.panel.open(...)`, `ctx.keymap.layer(...)`, and `ctx.client.rpc(...)` build the
+  `Kanban · Subagents` panel.
 
 ## Development
 

@@ -1,10 +1,12 @@
 {
   "name": "opencode-kanban-manager",
-  "version": "1.1.0",
-  "description": "OpenCode V2 plugin: a unified kanban that fuses engineering lifecycle classification with full-stack cross-stack routing, drives automatic subagent dispatch, and tracks each subagent run on its task card.",
+  "version": "1.2.0",
+  "description": "OpenCode V2 plugin: a unified kanban that fuses engineering lifecycle classification with full-stack cross-stack routing, tracks each subagent run on its task card, and adds a TUI subagent panel that mirrors the native picker.",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./rpc": "./src/rpc.ts",
+    "./tui": "./src/tui.tsx"
   },
   "files": [
     "src"
@@ -21,8 +23,28 @@
   "dependencies": {
     "@opencode/plugin": "latest"
   },
+  "peerDependencies": {
+    "@opentui/core": ">=0.5.8",
+    "@opentui/solid": ">=0.5.8",
+    "solid-js": ">=1.9.0"
+  },
+  "peerDependenciesMeta": {
+    "@opentui/core": {
+      "optional": true
+    },
+    "@opentui/solid": {
+      "optional": true
+    },
+    "solid-js": {
+      "optional": true
+    }
+  },
   "devDependencies": {
+    "@opencode/theme": "2.0.27",
+    "@opentui/core": "0.5.17",
+    "@opentui/solid": "0.5.17",
     "@types/node": "^22.0.0",
+    "solid-js": "1.9.15",
     "typescript": "^5.6.0"
   },
   "scripts": {

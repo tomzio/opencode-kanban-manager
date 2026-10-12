@@ -1,4 +1,5 @@
 import { Plugin } from "@opencode/plugin"
+import { KanbanRpc } from "./rpc.ts"
 
 /**
  * opencode-kanban-manager
@@ -190,6 +191,9 @@ export default Plugin.define({
 
     const keyOf = (id: string) => `${opts.storagePrefix}${id}`
 
+    // Notified whenever a card changes so the TUI panel can refresh (set after RPC registration).
+    let emitChanged: (() => void) | undefined
+
     // In-memory cache keeps successive rapid updates consistent before they are flushed.
     const cache = new Map<string, UnifiedTask>()
 
@@ -204,6 +208,7 @@ export default Plugin.define({
     async function putTask(task: UnifiedTask): Promise<void> {
       cache.set(task.id, task)
       await ctx.storage.set(keyOf(task.id), task as unknown as Parameters<typeof ctx.storage.set>[1])
+      emitChanged?.()
     }
 
     async function listTasks(): Promise<UnifiedTask[]> {
@@ -230,6 +235,38 @@ export default Plugin.define({
       }
       await putTask(task)
       return task
+    }
+
+    // ---------------------------------------------------------------------
+    // RPC: expose the board to the TUI plugin (src/tui.tsx)
+    // ---------------------------------------------------------------------
+    const rpc = await ctx.rpc.register(KanbanRpc, {
+      snapshot: async () => ({
+        generatedAt: nowIso(),
+        tasks: (await listTasks()).map((t) => ({
+          id: t.id,
+          title: t.title,
+          status: t.status,
+          lifecycle: t.lifecycle,
+          stack: t.stack,
+          summary: t.summary,
+          sessionID: t.sessionID,
+          agents: (t.agents ?? []).map((a) => ({
+            id: a.id,
+            agent: a.agent,
+            title: a.title,
+            status: a.status,
+            tools: a.tools,
+            lastTool: a.lastTool,
+            started_at: a.started_at,
+            updated_at: a.updated_at,
+          })),
+        })),
+      }),
+    })
+
+    emitChanged = () => {
+      void rpc.events.emit("changed", { at: nowIso() }).catch(() => {})
     }
 
     // ---------------------------------------------------------------------
