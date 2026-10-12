@@ -1,7 +1,7 @@
 {
   "name": "opencode-kanban-manager",
-  "version": "1.0.0",
-  "description": "OpenCode V2 plugin: a unified kanban that fuses engineering lifecycle classification with full-stack cross-stack routing, driving automatic subagent dispatch.",
+  "version": "1.1.0",
+  "description": "OpenCode V2 plugin: a unified kanban that fuses engineering lifecycle classification with full-stack cross-stack routing, drives automatic subagent dispatch, and tracks each subagent run on its task card.",
   "type": "module",
   "exports": {
     ".": "./src/index.ts"

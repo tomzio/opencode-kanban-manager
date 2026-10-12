@@ -12,12 +12,35 @@ import { Plugin } from "@opencode/plugin"
  * dispatch the correct expert subagent. Symptoms with unknown root cause become
  * `bug-fix + full-stack` and are flagged for the Full-Stack Detective subagent.
  *
+ * v1.1.0 adds subagent tracking: the plugin subscribes to the server event stream,
+ * detects child ("subagent") sessions via `parentID`, and attaches a live run record
+ * (agent, status, tool count, last tool) to the owning task card. The board therefore
+ * answers "which subagents ran for this task, and how did they go?".
+ *
  * Persistence uses the V2 `ctx.storage` domain (plugin-scoped JSON) instead of sqlite.
  */
 
 type Status = "todo" | "in_progress" | "review" | "done"
 type Lifecycle = "architecture" | "feature" | "bug-fix" | "testing" | "docs"
 type Stack = "frontend" | "backend" | "database" | "full-stack"
+type AgentStatus = "running" | "idle" | "done" | "failed"
+
+/** A subagent (child-session) run attached to a task card. */
+interface SubAgentRun {
+  /** Child session id. */
+  id: string
+  /** Agent id that owns the child session, e.g. "explore". */
+  agent?: string
+  /** Child-session title, e.g. "摸清页面注册与实现模板". */
+  title?: string
+  status: AgentStatus
+  /** Number of tool calls observed in the child session. */
+  tools: number
+  /** Name of the most recent tool call observed. */
+  lastTool?: string
+  started_at: string
+  updated_at: string
+}
 
 interface UnifiedTask {
   id: string
@@ -27,6 +50,10 @@ interface UnifiedTask {
   stack: Stack
   summary?: string
   created_at: string
+  /** Root session id that this card belongs to. */
+  sessionID?: string
+  /** Subagents dispatched while working this card. */
+  agents?: SubAgentRun[]
 }
 
 interface KanbanOptions {
@@ -36,16 +63,21 @@ interface KanbanOptions {
   maxBoardRows?: number
   /** Storage key prefix. Default: "kanban/tasks/". */
   storagePrefix?: string
+  /** Track subagent (child session) activity on each card. Default: true. */
+  trackSubagents?: boolean
 }
 
 const STATUSES: readonly Status[] = ["todo", "in_progress", "review", "done"]
 const LIFECYCLES: readonly Lifecycle[] = ["architecture", "feature", "bug-fix", "testing", "docs"]
 const STACKS: readonly Stack[] = ["frontend", "backend", "database", "full-stack"]
 
+const TERMINAL_AGENT_STATUSES: readonly AgentStatus[] = ["done", "failed"]
+
 const DEFAULTS: Required<KanbanOptions> = {
   autoCapture: true,
   maxBoardRows: 30,
   storagePrefix: "kanban/tasks/",
+  trackSubagents: true,
 }
 
 function isStatus(v: string): v is Status {
@@ -57,6 +89,10 @@ let seq = 0
 function newTaskId(): string {
   seq = (seq + 1) % 100000
   return `task_${Date.now().toString(36)}${seq.toString(36).padStart(2, "0")}`
+}
+
+function nowIso(): string {
+  return new Date().toISOString()
 }
 
 /**
@@ -87,22 +123,47 @@ function parseTaskAttributes(input: string): { lifecycle: Lifecycle; stack: Stac
   return { lifecycle, stack }
 }
 
+function renderAgentsSection(tasks: UnifiedTask[]): string {
+  const withAgents = tasks.filter((t) => (t.agents?.length ?? 0) > 0)
+  if (withAgents.length === 0) return ""
+
+  const lines: string[] = ["", "**Subagent activity**"]
+  for (const t of withAgents) {
+    lines.push(`- \`${t.id}\` ${t.title}`)
+    for (const a of t.agents ?? []) {
+      const icon =
+        a.status === "failed" ? "✗" : a.status === "done" ? "✓" : a.status === "idle" ? "◻" : "▶"
+      const who = a.agent ? `${a.agent}${a.title ? ` — ${a.title}` : ""}` : (a.title ?? a.id)
+      const last = a.lastTool ? ` · last: \`${a.lastTool}\`` : ""
+      lines.push(`  - ${icon} \`${who}\` · ${a.status} · ${a.tools} tools${last}`)
+    }
+  }
+  return lines.join("\n")
+}
+
 function renderBoard(tasks: UnifiedTask[], maxRows: number): string {
   if (tasks.length === 0) return "_(empty)_"
   const rows = tasks
     .slice(0, maxRows)
-    .map(
-      (t) =>
-        `| ${t.id} | \`${t.lifecycle}\` | \`${t.stack}\` | **${t.status}** | ${t.title} | ${
-          t.summary && t.summary.length > 0 ? t.summary : "-"
-        } |`,
-    )
+    .map((t) => {
+      const agents = t.agents ?? []
+      const running = agents.filter((a) => a.status === "running").length
+      const failed = agents.filter((a) => a.status === "failed").length
+      const agentCell =
+        agents.length === 0
+          ? "-"
+          : `${agents.length} total${running > 0 ? ` · ${running}▶` : ""}${failed > 0 ? ` · ${failed}✗` : ""}`
+      return `| ${t.id} | \`${t.lifecycle}\` | \`${t.stack}\` | **${t.status}** | ${t.title} | ${agentCell} | ${
+        t.summary && t.summary.length > 0 ? t.summary : "-"
+      } |`
+    })
     .join("\n")
-  return [
-    "| ID | Lifecycle | Stack | Status | Task | Delivery Summary |",
-    "|:---|:---|:---|:---|:---|:---|",
+  const table = [
+    "| ID | Lifecycle | Stack | Status | Task | Subagents | Delivery Summary |",
+    "|:---|:---|:---|:---|:---|:---|:---|",
     rows,
   ].join("\n")
+  return [table, renderAgentsSection(tasks)].filter((s) => s.length > 0).join("\n")
 }
 
 function routingBlueprint(): string {
@@ -119,28 +180,41 @@ export default Plugin.define({
   id: "opencode-kanban-manager",
 
   async setup(ctx) {
+    const rawOpts = ctx.options as KanbanOptions | undefined
     const opts: Required<KanbanOptions> = {
-      autoCapture: (ctx.options as KanbanOptions | undefined)?.autoCapture ?? DEFAULTS.autoCapture,
-      maxBoardRows: (ctx.options as KanbanOptions | undefined)?.maxBoardRows ?? DEFAULTS.maxBoardRows,
-      storagePrefix: (ctx.options as KanbanOptions | undefined)?.storagePrefix ?? DEFAULTS.storagePrefix,
+      autoCapture: rawOpts?.autoCapture ?? DEFAULTS.autoCapture,
+      maxBoardRows: rawOpts?.maxBoardRows ?? DEFAULTS.maxBoardRows,
+      storagePrefix: rawOpts?.storagePrefix ?? DEFAULTS.storagePrefix,
+      trackSubagents: rawOpts?.trackSubagents ?? DEFAULTS.trackSubagents,
     }
 
     const keyOf = (id: string) => `${opts.storagePrefix}${id}`
 
+    // In-memory cache keeps successive rapid updates consistent before they are flushed.
+    const cache = new Map<string, UnifiedTask>()
+
     async function getTask(id: string): Promise<UnifiedTask | undefined> {
-      return (await ctx.storage.get(keyOf(id))) as unknown as UnifiedTask | undefined
+      const hit = cache.get(id)
+      if (hit) return hit
+      const stored = (await ctx.storage.get(keyOf(id))) as unknown as UnifiedTask | undefined
+      if (stored) cache.set(id, stored)
+      return stored
     }
 
     async function putTask(task: UnifiedTask): Promise<void> {
+      cache.set(task.id, task)
       await ctx.storage.set(keyOf(task.id), task as unknown as Parameters<typeof ctx.storage.set>[1])
     }
 
     async function listTasks(): Promise<UnifiedTask[]> {
       const { entries } = await ctx.storage.scan({ prefix: opts.storagePrefix })
-      return entries
-        .map((e) => e.value as unknown as UnifiedTask)
-        .filter((t): t is UnifiedTask => !!t && typeof t.id === "string")
-        .sort((a, b) => a.created_at.localeCompare(b.created_at))
+      const merged = new Map<string, UnifiedTask>()
+      for (const e of entries) {
+        const t = e.value as unknown as UnifiedTask
+        if (t && typeof t.id === "string") merged.set(t.id, t)
+      }
+      for (const [id, t] of cache) merged.set(id, t)
+      return [...merged.values()].sort((a, b) => a.created_at.localeCompare(b.created_at))
     }
 
     async function createTask(title: string): Promise<UnifiedTask> {
@@ -152,10 +226,116 @@ export default Plugin.define({
         lifecycle,
         stack,
         summary: "",
-        created_at: new Date().toISOString(),
+        created_at: nowIso(),
       }
       await putTask(task)
       return task
+    }
+
+    // ---------------------------------------------------------------------
+    // Subagent tracking — session index
+    // ---------------------------------------------------------------------
+    // Maps any known session id (root task session OR child subagent session) to its owning card.
+    const sessionIndex = new Map<string, string>()
+
+    /**
+     * Apply a server event to the matching subagent run, if this plugin tracks the session.
+     * Events are loosely typed here on purpose: the payload shapes vary per event type and
+     * only the fields used below are stable.
+     */
+    function applyRunEvent(run: SubAgentRun, type: string, data: Record<string, unknown>): void {
+      const isTerminal = TERMINAL_AGENT_STATUSES.includes(run.status)
+      switch (type) {
+        case "session.tool.input.started":
+          run.tools += 1
+          if (typeof data.name === "string") run.lastTool = data.name
+          run.status = "running"
+          break
+        case "session.execution.started":
+          run.status = "running"
+          break
+        case "session.execution.succeeded":
+          run.status = "done"
+          break
+        case "session.execution.failed":
+          run.status = "failed"
+          break
+        case "session.execution.interrupted":
+          run.status = "idle"
+          break
+        case "session.idle":
+          if (run.status === "running") run.status = "idle"
+          break
+        case "session.status": {
+          const status = data.status as { type?: string } | undefined
+          const s = status?.type
+          if (s === "busy" || s === "retry") run.status = "running"
+          else if (s === "idle" && run.status === "running") run.status = "idle"
+          break
+        }
+        case "session.agent.selected":
+          if (typeof data.agent === "string") run.agent = data.agent
+          break
+        default:
+          return
+      }
+      // Do not resurrect terminal runs on late idle/status noise.
+      if (isTerminal && (type === "session.idle" || type === "session.status")) return
+      run.updated_at = nowIso()
+    }
+
+    async function handleEvent(ev: unknown): Promise<void> {
+      const event = ev as {
+        type?: string
+        data?: Record<string, unknown>
+        location?: { directory?: string }
+      }
+      const type = event.type
+      if (!type) return
+
+      const dir = event.location?.directory
+      if (dir && ctx.location.directory && dir !== ctx.location.directory) return
+
+      const data = event.data ?? {}
+      const sessionID = typeof data.sessionID === "string" ? data.sessionID : undefined
+
+      if (type === "session.created") {
+        const parentID = typeof data.parentID === "string" ? data.parentID : undefined
+        if (!parentID) return
+        const taskId = sessionIndex.get(parentID)
+        if (!taskId) return
+        const task = await getTask(taskId)
+        if (!task) return
+        const run: SubAgentRun = {
+          id: sessionID ?? "unknown",
+          agent: typeof data.agent === "string" ? data.agent : undefined,
+          title: typeof data.title === "string" ? data.title : undefined,
+          status: "running",
+          tools: 0,
+          started_at: nowIso(),
+          updated_at: nowIso(),
+        }
+        if (!run.id || run.id === "unknown") return
+        task.agents = [...(task.agents ?? []), run]
+        await putTask(task)
+        sessionIndex.set(run.id, taskId)
+        return
+      }
+
+      if (type === "session.deleted") {
+        if (sessionID) sessionIndex.delete(sessionID)
+        return
+      }
+
+      if (!sessionID) return
+      const taskId = sessionIndex.get(sessionID)
+      if (!taskId) return
+      const task = await getTask(taskId)
+      if (!task) return
+      const run = (task.agents ?? []).find((a) => a.id === sessionID)
+      if (!run) return
+      applyRunEvent(run, type, data)
+      await putTask(task)
     }
 
     // ---------------------------------------------------------------------
@@ -244,6 +424,29 @@ export default Plugin.define({
           return { content: renderBoard(tasks, opts.maxBoardRows) }
         },
       })
+
+      editor.add({
+        name: "kanban_list_agents",
+        description:
+          "List subagent activity across kanban cards. Optionally filter by a card id or by task status.",
+        input: {
+          type: "object",
+          properties: {
+            taskId: { type: "string", description: "Only show subagents for this card" },
+            status: { type: "string", enum: STATUSES as unknown as string[] },
+          },
+          additionalProperties: false,
+        },
+        options: { codemode: true },
+        execute: async (input) => {
+          const { taskId, status } = (input ?? {}) as { taskId?: string; status?: Status }
+          let tasks = await listTasks()
+          if (taskId) tasks = tasks.filter((t) => t.id === taskId)
+          if (status) tasks = tasks.filter((t) => t.status === status)
+          const section = renderAgentsSection(tasks)
+          return { content: section.length > 0 ? section : "_(no subagent activity)_" }
+        },
+      })
     })
 
     // ---------------------------------------------------------------------
@@ -272,7 +475,20 @@ export default Plugin.define({
       if (content.startsWith("/") && !content.startsWith("/task ")) return
       if (!opts.autoCapture && !content.startsWith("/task ")) return
 
+      // Never capture prompts that belong to a subagent (child) session.
+      try {
+        const info = (await ctx.session.get({ sessionID: event.sessionID })) as
+          | { parentID?: string }
+          | undefined
+        if (info?.parentID) return
+      } catch {
+        // If lookup fails, fall through and capture (better to over-capture than drop work).
+      }
+
       const task = await createTask(taskTitle)
+      task.sessionID = event.sessionID
+      await putTask(task)
+      sessionIndex.set(event.sessionID, task.id)
 
       // Keep the user's original request intact; append routing metadata.
       event.prompt.text = [
@@ -285,6 +501,7 @@ export default Plugin.define({
         `- Requirement: 「${taskTitle}」`,
         "Follow the routing blueprint above and dispatch the matching expert subagent via the `subagent` tool " +
           "(for an unknown full-stack bug, dispatch the Full-Stack Detective subagent).",
+        "Subagent activity will be tracked on this card automatically.",
       ].join("\n")
     })
 
@@ -306,8 +523,37 @@ export default Plugin.define({
       })
     })
 
-    return () => {
-      // no long-lived resources held; storage is managed by the runtime
+    // ---------------------------------------------------------------------
+    // Subscribe to the server event stream and track subagent (child) sessions.
+    // ---------------------------------------------------------------------
+    const ac = new AbortController()
+    let loop: Promise<void> | undefined
+
+    if (opts.trackSubagents) {
+      // Rebuild the session index from persisted cards so tracking survives restarts.
+      for (const t of await listTasks()) {
+        if (t.sessionID) sessionIndex.set(t.sessionID, t.id)
+        for (const a of t.agents ?? []) sessionIndex.set(a.id, t.id)
+      }
+
+      loop = (async () => {
+        try {
+          for await (const ev of ctx.event.subscribe({ signal: ac.signal })) {
+            try {
+              await handleEvent(ev)
+            } catch {
+              // Never let a single bad event kill the subscription.
+            }
+          }
+        } catch {
+          // Subscription aborted on cleanup.
+        }
+      })()
+    }
+
+    return async () => {
+      ac.abort()
+      await loop?.catch(() => {})
     }
   },
 })

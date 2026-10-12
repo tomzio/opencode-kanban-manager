@@ -14,6 +14,12 @@ Detective** subagent.
 The board lives only in the master context. All debugging detail stays inside subagent
 sessions, so the orchestrator's context stays clean.
 
+**v1.1.0 — subagent tracking.** The plugin subscribes to the server event stream,
+detects child ("subagent") sessions through their `parentID`, and attaches a live run
+record to the owning card: agent id, title, status (`running` / `idle` / `done` /
+`failed`), tool-call count, and the last tool used. So the board answers *"which
+subagents ran for this task, and how did they go?"* — not just *"what is the task?"*.
+
 ## Preview
 
 ![opencode-kanban-manager preview](docs/preview.png)
@@ -78,6 +84,35 @@ automatically:
 - `kanban_update_status` — update a card's status and delivery summary (use to archive).
 - `kanban_add_task` — create a card, optionally forcing lifecycle/stack.
 - `kanban_list` — list cards, optionally filtered by status.
+- `kanban_list_agents` — list subagent activity, optionally scoped to one card or task status.
+
+## Subagent tracking
+
+When the master agent dispatches a subagent, OpenCode runs it in a *child session*
+(`parentID` set). The plugin listens to `ctx.event.subscribe(...)`, links each child
+session to the card that owns its parent, and keeps the run record fresh:
+
+| Event | Effect on the run record |
+|:---|:---|
+| `session.created` (has `parentID`) | create the run: agent, title, status `running` |
+| `session.tool.input.started` | `tools += 1`, record `lastTool` |
+| `session.execution.started` / `session.status` busy | status `running` |
+| `session.execution.succeeded` | status `done` |
+| `session.execution.failed` / interrupted | status `failed` / `idle` |
+| `session.idle` | status `idle` |
+| `session.agent.selected` | update the agent id |
+
+Every card gains a **Subagents** column (counts) plus an expanded `**Subagent activity**`
+list in `/board` and in the injected context, e.g.:
+
+```
+- `task_a1` 医疗档案列表控件怎么没数据
+  - ▶ `explore — 摸清页面注册` · running · 12 tools · last: `grep`
+  - ✓ `general — 医保附属拆四册` · done · 5 tools
+```
+
+This is per-task and persisted, so it survives restarts — it complements the native TUI
+`Subagents` picker (press `↓`), which only shows the *current* session's live children.
 
 ## Routing blueprint (injected into the model context)
 
@@ -95,6 +130,7 @@ automatically:
 | `autoCapture` | `boolean` | `true` | Record every non-command user message as a card. |
 | `maxBoardRows` | `number` | `30` | Max active rows injected into the context. |
 | `storagePrefix` | `string` | `"kanban/tasks/"` | Storage key prefix. |
+| `trackSubagents` | `boolean` | `true` | Track subagent (child-session) activity on each card. |
 
 ## How it works (V2 API)
 
@@ -105,6 +141,9 @@ automatically:
   (the original request is preserved).
 - `ctx.session.hook("context", ...)` — injects the board + routing blueprint into every
   model request.
+- `ctx.event.subscribe({ signal })` — observes `session.created` (child sessions),
+  `session.tool.input.started`, `session.execution.*`, and `session.status` to keep each
+  card's subagent run records current.
 
 ## Development
 
