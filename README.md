@@ -14,6 +14,10 @@ Detective** subagent.
 The board lives only in the master context. All debugging detail stays inside subagent
 sessions, so the orchestrator's context stays clean.
 
+## Preview
+
+![opencode-kanban-manager preview](docs/preview.png)
+
 ## Why one plugin, not two
 
 In real development a task always has *both* a lifecycle stage and a technical-stack

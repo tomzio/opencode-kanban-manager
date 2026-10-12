@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>opencode-kanban-manager preview</title>
+<style>
+  :root{
+    --bg:#07090d;
+    --win:#0d1117;
+    --bar:#161b22;
+    --panel:#0f141b;
+    --line:#232b36;
+    --txt:#c9d1d9;
+    --dim:#7d8590;
+    --blue:#7aa2f7;
+    --green:#9ece6a;
+    --red:#f7768e;
+    --yellow:#e0af68;
+    --purple:#bb9af7;
+    --cyan:#7dcfff;
+    --orange:#ff9e64;
+    --magenta:#ff79c6;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:
+      radial-gradient(1200px 600px at 15% -10%, #1b2333 0%, transparent 60%),
+      radial-gradient(1000px 500px at 110% 110%, #241a2b 0%, transparent 55%),
+      var(--bg);
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif;
+    color:var(--txt);
+    padding:48px;
+    display:flex;
+    justify-content:center;
+  }
+
+  .win{
+    width:1180px;
+    background:var(--win);
+    border:1px solid var(--line);
+    border-radius:14px;
+    overflow:hidden;
+    box-shadow:0 40px 90px rgba(0,0,0,.65), 0 0 0 1px rgba(255,255,255,.02) inset;
+  }
+
+  /* ---- title bar ---- */
+  .titlebar{
+    height:46px;display:flex;align-items:center;gap:14px;
+    padding:0 18px;background:var(--bar);border-bottom:1px solid var(--line);
+    position:relative;
+  }
+  .lights{display:flex;gap:8px}
+  .light{width:12px;height:12px;border-radius:50%}
+  .l1{background:#ff5f57}.l2{background:#febc2e}.l3{background:#28c840}
+  .title{
+    position:absolute;left:50%;transform:translateX(-50%);
+    font-size:12.5px;color:var(--dim);letter-spacing:.02em;
+    display:flex;align-items:center;gap:8px;
+  }
+  .tab-start{
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;
+    color:#0b0e14;background:var(--cyan);padding:2px 7px;border-radius:5px;font-weight:700;
+  }
+  .pulse{display:inline-flex;align-items:center;gap:6px;margin-left:auto;
+    font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:var(--green)}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--green);
+    box-shadow:0 0 0 0 rgba(158,206,106,.7);animation:p 2s infinite}
+  @keyframes p{0%{box-shadow:0 0 0 0 rgba(158,206,106,.55)}70%{box-shadow:0 0 0 7px rgba(158,206,106,0)}100%{box-shadow:0 0 0 0 rgba(158,206,106,0)}}
+
+  /* ---- body ---- */
+  .body{padding:26px 30px 20px;display:flex;flex-direction:column;gap:20px}
+
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,"Cascadia Code",monospace}
+
+  /* user bubble */
+  .user-row{display:flex;gap:12px;align-items:flex-start}
+  .chev{color:var(--green);font-weight:700;font-size:15px;line-height:1.5;user-select:none}
+  .user-text{font-size:14.5px;line-height:1.6;color:#e6edf3}
+  .user-text .hl{color:var(--yellow)}
+
+  /* system notice */
+  .notice{
+    border-left:3px solid var(--purple);
+    background:linear-gradient(90deg, rgba(187,154,247,.10), rgba(187,154,247,.02));
+    border-radius:0 8px 8px 0;
+    padding:12px 16px;display:flex;flex-direction:column;gap:5px;
+  }
+  .notice .h{font-size:13px;color:var(--purple);font-weight:700;letter-spacing:.01em}
+  .notice .ln{font-size:12.5px;color:var(--dim);line-height:1.55}
+  .notice .ln b{color:#e6edf3;font-weight:600}
+
+  /* injected context panel */
+  .inject{
+    border:1px dashed #3a4553;border-radius:12px;background:var(--panel);
+    padding:18px 20px 20px;
+  }
+  .inject-head{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+  .chip{
+    font-family:ui-monospace,Menlo,monospace;font-size:10.5px;letter-spacing:.08em;
+    text-transform:uppercase;color:var(--cyan);
+    border:1px solid rgba(125,207,255,.35);background:rgba(125,207,255,.08);
+    padding:3px 8px;border-radius:999px;
+  }
+  .inject-title{font-size:15px;font-weight:700;color:#e6edf3}
+
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  thead th{
+    text-align:left;font-family:ui-monospace,Menlo,monospace;font-weight:600;
+    font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim);
+    padding:0 10px 9px;border-bottom:1px solid var(--line);
+  }
+  tbody td{padding:10px;border-bottom:1px solid #1a212b;vertical-align:middle}
+  tbody tr:last-child td{border-bottom:none}
+  tbody tr:hover{background:rgba(255,255,255,.02)}
+  .id{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:var(--dim)}
+  .task{color:#dfe6ee}
+  .sum{color:var(--dim);font-size:11.5px}
+
+  .badge{
+    display:inline-block;font-family:ui-monospace,Menlo,monospace;font-size:10.5px;
+    font-weight:600;padding:2px 8px;border-radius:6px;letter-spacing:.02em;white-space:nowrap;
+  }
+  .b-arch{color:var(--purple);background:rgba(187,154,247,.14)}
+  .b-feat{color:var(--blue);background:rgba(122,162,247,.14)}
+  .b-bug{color:var(--red);background:rgba(247,118,142,.14)}
+  .b-test{color:var(--yellow);background:rgba(224,175,104,.14)}
+  .b-docs{color:var(--cyan);background:rgba(125,207,255,.14)}
+
+  .s-fe{color:var(--green);background:rgba(158,206,106,.14)}
+  .s-be{color:var(--blue);background:rgba(122,162,247,.14)}
+  .s-db{color:var(--orange);background:rgba(255,158,100,.16)}
+  .s-fs{color:var(--magenta);background:rgba(255,121,198,.15)}
+
+  .st{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:600}
+  .st .d{width:7px;height:7px;border-radius:50%}
+  .st-todo{color:var(--dim)} .st-todo .d{background:var(--dim)}
+  .st-prog{color:var(--blue)} .st-prog .d{background:var(--blue)}
+  .st-rev{color:var(--yellow)} .st-rev .d{background:var(--yellow)}
+  .st-done{color:var(--green)} .st-done .d{background:var(--green)}
+
+  /* whitepaper */
+  .wp{margin-top:18px;border-top:1px solid var(--line);padding-top:16px}
+  .wp h4{margin:0 0 10px;font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:var(--dim)}
+  .wp ol{margin:0;padding-left:0;list-style:none;display:flex;flex-direction:column;gap:7px}
+  .wp li{font-size:12.5px;line-height:1.55;color:#aeb8c4;display:flex;gap:9px}
+  .wp li .n{
+    flex:0 0 18px;height:18px;border-radius:5px;background:#1b2330;color:var(--cyan);
+    font-family:ui-monospace,Menlo,monospace;font-size:10.5px;display:flex;
+    align-items:center;justify-content:center;margin-top:1px;
+  }
+  .k{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;padding:1px 5px;border-radius:4px;background:#1b2330;color:#dfe6ee}
+
+  /* input bar */
+  .input{
+    margin:2px 30px 22px;background:var(--panel);border:1px solid var(--line);
+    border-radius:10px;padding:12px 15px;display:flex;align-items:center;gap:10px;
+  }
+  .input .prompt{color:var(--green);font-weight:700}
+  .input .ph{color:#555f6b;font-size:13px}
+  .input .cursor{width:8px;height:16px;background:var(--cyan);display:inline-block;animation:b 1.1s steps(1) infinite}
+  @keyframes b{50%{opacity:0}}
+  .hint{margin-left:auto;display:flex;gap:8px}
+  .key{font-family:ui-monospace,Menlo,monospace;font-size:10.5px;color:var(--dim);
+    border:1px solid var(--line);border-radius:5px;padding:2px 7px;background:#11161d}
+</style>
+</head>
+<body>
+  <div class="win">
+    <div class="titlebar">
+      <div class="lights"><div class="light l1"></div><div class="light l2"></div><div class="light l3"></div></div>
+      <div class="title">
+        <span class="tab-start">OPENCODE</span>
+        <span>session — webhis-refactor</span>
+      </div>
+      <div class="pulse"><span class="dot"></span>kanban-manager v1.0.0 active</div>
+    </div>
+
+    <div class="body">
+      <!-- user prompt -->
+      <div class="user-row">
+        <div class="chev">›</div>
+        <div class="user-text">
+          奇怪,<span class="hl">医疗档案列表控件怎么没数据</span>,是前端坏了还是后端接口挂了?
+        </div>
+      </div>
+
+      <!-- kanban system notice -->
+      <div class="notice">
+        <div class="h">📌 Kanban System Notice — new task recorded</div>
+        <div class="ln">Card&nbsp; <b>task_m3k9a1</b>&nbsp; · &nbsp;Lifecycle&nbsp; <b>BUG-FIX</b>&nbsp; · &nbsp;Stack&nbsp; <b>FULL-STACK</b></div>
+        <div class="ln">Requirement: 「医疗档案列表控件怎么没数据,是前端坏了还是后端接口挂了?」</div>
+        <div class="ln">→ routing blueprint applied: dispatch the <b>Full-Stack Detective subagent</b> (UI → API → DB).</div>
+      </div>
+
+      <!-- injected context -->
+      <div class="inject">
+        <div class="inject-head">
+          <span class="chip">system context · injected</span>
+          <span class="inject-title">🌐 OpenCode Unified Engineering &amp; Cross-Stack Detective Board</span>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th><th>Lifecycle</th><th>Stack</th><th>Status</th><th>Task</th><th>Delivery Summary</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="id">task_m3k9a1</td>
+              <td><span class="badge b-bug">bug-fix</span></td>
+              <td><span class="badge s-fs">full-stack</span></td>
+              <td><span class="st st-prog"><span class="d"></span>in_progress</span></td>
+              <td class="task">医疗档案列表控件没数据,前后端未知病因</td>
+              <td class="sum">—</td>
+            </tr>
+            <tr>
+              <td class="id">task_p7x2c4</td>
+              <td><span class="badge b-feat">feature</span></td>
+              <td><span class="badge s-fe">frontend</span></td>
+              <td><span class="st st-todo"><span class="d"></span>todo</span></td>
+              <td class="task">患者信息导出按钮 + 批量下载</td>
+              <td class="sum">—</td>
+            </tr>
+            <tr>
+              <td class="id">task_q9w3d8</td>
+              <td><span class="badge b-arch">architecture</span></td>
+              <td><span class="badge s-db">database</span></td>
+              <td><span class="st st-rev"><span class="d"></span>review</span></td>
+              <td class="task">重构数据库查询 PL/SQL 包并补单元测试</td>
+              <td class="sum">已拆分 3 个存储过程</td>
+            </tr>
+            <tr>
+              <td class="id">task_r2t6e5</td>
+              <td><span class="badge b-bug">bug-fix</span></td>
+              <td><span class="badge s-fe">frontend</span></td>
+              <td><span class="st st-done"><span class="d"></span>done</span></td>
+              <td class="task">导出按钮点击无响应</td>
+              <td class="sum">修复事件绑定顺序</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="wp">
+          <h4>Master Agent Intelligent Routing Whitepaper</h4>
+          <ol>
+            <li><span class="n">1</span><span><span class="k">bug-fix</span> + <span class="k">full-stack</span> → dispatch the <b style="color:#ff79c6">Full-Stack Detective subagent</b>; investigate top-down UI → API → DB, never patch blindly.</span></li>
+            <li><span class="n">2</span><span><span class="k">bug-fix</span> + <span class="k">frontend</span>/<span class="k">backend</span>/<span class="k">database</span> → dispatch the matching local fix subagent.</span></li>
+            <li><span class="n">3</span><span><span class="k">architecture</span> / <span class="k">feature</span> → dispatch the architect or full-stack development subagent.</span></li>
+            <li><span class="n">4</span><span>Zero-pollution: debugging detail stays in subagent sessions; archive a card with <span class="k">kanban_update_status</span> when done.</span></li>
+          </ol>
+        </div>
+      </div>
+    </div>
+
+    <div class="input">
+      <span class="prompt mono">›</span>
+      <span class="ph mono">/board&nbsp;&nbsp;or&nbsp;&nbsp;/task &lt;title&gt;&nbsp;&nbsp;or&nbsp;&nbsp;just type your request…</span>
+      <span class="cursor"></span>
+      <span class="hint">
+        <span class="key">⌘K</span><span class="key">/board</span><span class="key">esc</span>
+      </span>
+    </div>
+  </div>
+</body>
+</html>
