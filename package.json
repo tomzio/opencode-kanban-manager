@@ -1,0 +1,31 @@
+{
+  "name": "opencode-kanban-manager",
+  "version": "1.0.0",
+  "description": "OpenCode V2 plugin: a unified kanban that fuses engineering lifecycle classification with full-stack cross-stack routing, driving automatic subagent dispatch.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src"
+  ],
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "kanban",
+    "orchestration",
+    "subagent",
+    "opencode-v2"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@opencode/plugin": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  }
+}
